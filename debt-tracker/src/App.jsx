@@ -257,13 +257,29 @@ function AddInstallmentModal({ cardName, onAdd, onClose }) {
   );
 }
 
+const PERIOD_OPTIONS = [1,2,3,6,9,12,18,24,36,48,60];
+
 function AddDebtModal({ onAdd, onClose }) {
   const [type, setType] = useState("credit_card");
-  const [form, setForm] = useState({ name: "", color: "#3b82f6", dueDay: "", lastMonthSpending: "0", totalAmount: "", remainingBalance: "", monthlyPayment: "", interestRate: "" });
+  // loanStyle: "installment"=等额月供  "flexible"=随时还清/一次性
+  const [form, setForm] = useState({
+    name: "", color: "#3b82f6", dueDay: "", lastMonthSpending: "0",
+    totalAmount: "", remainingBalance: "", monthlyPayment: "", interestRate: "",
+    loanStyle: "installment", totalPeriods: "12", paidPeriods: "0",
+  });
   const COLORS = ["#ef4444","#f97316","#eab308","#22c55e","#3b82f6","#a855f7","#ec4899","#14b8a6"];
 
+  const totalP = Number(form.totalPeriods) || 0;
+  const paidP  = Math.min(Number(form.paidPeriods) || 0, Math.max(0, totalP - 1));
+  const remainP = totalP - paidP;
+
+  // 预览：月供 = 剩余欠款 / 剩余期数（如果没填月供）
+  const autoMonthly = form.remainingBalance && remainP > 0 && !form.monthlyPayment
+    ? (Number(form.remainingBalance) / remainP).toFixed(0)
+    : form.monthlyPayment;
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-4">
       <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
         <h2 className="text-lg font-bold mb-4">➕ 新增负债</h2>
         <div className="flex gap-2 mb-4">
@@ -275,7 +291,7 @@ function AddDebtModal({ onAdd, onClose }) {
         <div className="space-y-3">
           <div>
             <label className="text-xs text-gray-500">名称</label>
-            <input className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder={type==="credit_card"?"如：工商银行信用卡":"如：某某网贷"}
+            <input className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder={type==="credit_card"?"如：工商银行信用卡":"如：车贷 / 花呗 / 某某网贷"}
               value={form.name} onChange={(e) => setForm({...form,name:e.target.value})} />
           </div>
           <div>
@@ -283,6 +299,7 @@ function AddDebtModal({ onAdd, onClose }) {
             <input type="number" min="1" max="31" className="w-full border rounded-lg p-2 mt-1 text-sm"
               value={form.dueDay} onChange={(e) => setForm({...form,dueDay:e.target.value})} />
           </div>
+
           {type === "credit_card" && (
             <div>
               <label className="text-xs text-gray-500">本期账单中的新消费（非分期部分）</label>
@@ -291,8 +308,24 @@ function AddDebtModal({ onAdd, onClose }) {
               <p className="text-xs text-gray-400 mt-0.5">分期账单可稍后单独添加</p>
             </div>
           )}
+
           {type === "loan" && (
             <>
+              {/* 还款方式 */}
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">还款方式</label>
+                <div className="flex gap-2">
+                  {[["installment","📅 等额月供"],["flexible","💸 随时还清"]].map(([k,l]) => (
+                    <button key={k} className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-colors ${form.loanStyle===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-600"}`}
+                      onClick={() => setForm({...form,loanStyle:k})}>{l}</button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  {form.loanStyle==="installment" ? "每月固定还款，有明确还清日期（车贷、房贷、分期网贷）" : "无固定月供，随时可以多还或一次性还清（部分网贷、借款）"}
+                </p>
+              </div>
+
+              {/* 金额 */}
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="text-xs text-gray-500">当前剩余欠款</label>
@@ -301,24 +334,58 @@ function AddDebtModal({ onAdd, onClose }) {
                 </div>
                 <div className="flex-1">
                   <label className="text-xs text-gray-500">原始借款总额</label>
-                  <input type="number" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="¥"
+                  <input type="number" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="¥（可选）"
                     value={form.totalAmount} onChange={(e) => setForm({...form,totalAmount:e.target.value})} />
                 </div>
               </div>
+
+              {/* 等额月供：期数 */}
+              {form.loanStyle === "installment" && (
+                <div className="bg-blue-50 rounded-xl p-3 space-y-2">
+                  <p className="text-xs font-semibold text-blue-700">期数设置</p>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500">总期数（月）</label>
+                      <select className="w-full border rounded-lg p-2 mt-1 text-sm bg-white"
+                        value={form.totalPeriods} onChange={(e) => setForm({...form,totalPeriods:e.target.value})}>
+                        {PERIOD_OPTIONS.map(n => <option key={n} value={n}>{n}期（{n >= 12 ? (n/12).toFixed(1)+"年" : n+"月"}）</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500">已还期数</label>
+                      <input type="number" min="0" max={totalP - 1} className="w-full border rounded-lg p-2 mt-1 text-sm bg-white"
+                        placeholder="0"
+                        value={form.paidPeriods} onChange={(e) => setForm({...form,paidPeriods:e.target.value})} />
+                    </div>
+                  </div>
+                  <p className="text-xs text-blue-600 font-medium">
+                    → 剩余 <span className="font-bold">{remainP}</span> 期，
+                    约 {remainP >= 12 ? (remainP/12).toFixed(1)+"年" : remainP+"个月"} 还清
+                  </p>
+                </div>
+              )}
+
+              {/* 月还款 & 利率 */}
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="text-xs text-gray-500">月还款额</label>
+                  <label className="text-xs text-gray-500">
+                    {form.loanStyle==="installment" ? "月还款额" : "月还款额（可选）"}
+                  </label>
                   <input type="number" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="¥"
                     value={form.monthlyPayment} onChange={(e) => setForm({...form,monthlyPayment:e.target.value})} />
+                  {form.loanStyle==="installment" && !form.monthlyPayment && form.remainingBalance && remainP > 0 && (
+                    <p className="text-xs text-gray-400 mt-0.5">按剩余欠款估算 ≈ ¥{Number(autoMonthly).toLocaleString()}/月</p>
+                  )}
                 </div>
                 <div className="flex-1">
                   <label className="text-xs text-gray-500">年利率（%）</label>
-                  <input type="number" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="如：18.25"
+                  <input type="number" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="如：5.5"
                     value={form.interestRate} onChange={(e) => setForm({...form,interestRate:e.target.value})} />
                 </div>
               </div>
             </>
           )}
+
           <div>
             <label className="text-xs text-gray-500">颜色</label>
             <div className="flex gap-2 mt-1 flex-wrap">
@@ -338,7 +405,18 @@ function AddDebtModal({ onAdd, onClose }) {
               if (type === "credit_card") {
                 onAdd({ ...base, type: "credit_card", lastMonthSpending: Number(form.lastMonthSpending || 0), installments: [] });
               } else {
-                onAdd({ ...base, type: "loan", totalAmount: Number(form.totalAmount || form.remainingBalance), remainingBalance: Number(form.remainingBalance), monthlyPayment: Number(form.monthlyPayment), interestRate: Number(form.interestRate || 0) });
+                const monthly = Number(form.monthlyPayment) || Number(autoMonthly) || 0;
+                onAdd({
+                  ...base, type: "loan",
+                  loanStyle: form.loanStyle,
+                  totalAmount: Number(form.totalAmount || form.remainingBalance),
+                  remainingBalance: Number(form.remainingBalance),
+                  monthlyPayment: monthly,
+                  interestRate: Number(form.interestRate || 0),
+                  // 期数信息（仅等额月供有意义）
+                  totalPeriods: form.loanStyle === "installment" ? totalP : 0,
+                  paidPeriods:  form.loanStyle === "installment" ? paidP  : 0,
+                });
               }
               onClose();
             }}>确认</button>
@@ -549,7 +627,16 @@ function CreditCardCard({ card, onAddInstallment, onPay, onDelete, onUpdateSpend
 }
 
 function LoanCard({ loan, onPay, onDelete }) {
-  const paidRatio = loan.totalAmount > 0 ? Math.max(0, (loan.totalAmount - loan.remainingBalance) / loan.totalAmount) : 0;
+  const isInstallment = loan.loanStyle === "installment" && loan.totalPeriods > 0;
+  const paidPeriods  = loan.paidPeriods  || 0;
+  const totalPeriods = loan.totalPeriods || 0;
+  const remainPeriods = Math.max(0, totalPeriods - paidPeriods);
+
+  // 进度：有期数用期数，否则用金额
+  const paidRatio = isInstallment
+    ? (totalPeriods > 0 ? paidPeriods / totalPeriods : 0)
+    : (loan.totalAmount > 0 ? Math.max(0, (loan.totalAmount - loan.remainingBalance) / loan.totalAmount) : 0);
+
   const paidThisMonth = loan.payments.some((p) => p.month === TODAY_MONTH);
   const days = daysUntilDue(loan.dueDay);
   const monthlyInterest = loan.interestRate > 0 ? (loan.remainingBalance * loan.interestRate) / 100 / 12 : 0;
@@ -561,7 +648,16 @@ function LoanCard({ loan, onPay, onDelete }) {
           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: loan.color }} />
           <div>
             <h3 className="font-bold text-gray-800 text-sm">{loan.name}</h3>
-            <span className="text-xs text-gray-400">贷款 · 每月{loan.dueDay}日</span>
+            <div className="flex items-center gap-1 mt-0.5">
+              <span className="text-xs text-gray-400">
+                {loan.loanStyle === "flexible" ? "随时还清" : "等额月供"} · 每月{loan.dueDay}日
+              </span>
+              {isInstallment && (
+                <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">
+                  剩 {remainPeriods} 期
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -569,19 +665,47 @@ function LoanCard({ loan, onPay, onDelete }) {
           <button className="text-gray-300 hover:text-red-400 text-lg" onClick={() => onDelete(loan.id)}>×</button>
         </div>
       </div>
+
+      {/* 进度条 */}
       <div className="mb-3">
         <div className="flex justify-between text-xs text-gray-400 mb-1">
-          <span>已还 {Math.round(paidRatio * 100)}%</span>
-          <span>剩余 {fmtShort(loan.remainingBalance)}</span>
+          {isInstallment ? (
+            <>
+              <span>已还 {paidPeriods}/{totalPeriods} 期（{Math.round(paidRatio * 100)}%）</span>
+              <span>剩余 {fmtShort(loan.remainingBalance)}</span>
+            </>
+          ) : (
+            <>
+              <span>已还 {Math.round(paidRatio * 100)}%</span>
+              <span>剩余 {fmtShort(loan.remainingBalance)}</span>
+            </>
+          )}
         </div>
         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${paidRatio * 100}%`, backgroundColor: loan.color }} />
+          <div className="h-full rounded-full transition-all" style={{ width: `${paidRatio * 100}%`, backgroundColor: loan.color }} />
         </div>
+        {isInstallment && remainPeriods > 0 && (
+          <p className="text-xs text-gray-400 mt-1">
+            预计还清：约 {remainPeriods >= 12
+              ? `${Math.floor(remainPeriods/12)}年${remainPeriods%12 > 0 ? remainPeriods%12+"个月" : ""}`
+              : `${remainPeriods}个月`}后
+          </p>
+        )}
       </div>
+
       <div className="grid grid-cols-3 gap-2 text-center mb-3">
-        <div className="bg-gray-50 rounded-xl p-2"><p className="text-xs text-gray-400">月还款</p><p className="text-sm font-bold text-gray-700">{fmtShort(loan.monthlyPayment)}</p></div>
-        <div className="bg-gray-50 rounded-xl p-2"><p className="text-xs text-gray-400">年利率</p><p className="text-sm font-bold text-gray-700">{loan.interestRate > 0 ? loan.interestRate + "%" : "—"}</p></div>
-        <div className="bg-gray-50 rounded-xl p-2"><p className="text-xs text-gray-400">月利息约</p><p className="text-sm font-bold text-gray-700">{monthlyInterest > 0 ? fmtShort(monthlyInterest) : "—"}</p></div>
+        <div className="bg-gray-50 rounded-xl p-2">
+          <p className="text-xs text-gray-400">月还款</p>
+          <p className="text-sm font-bold text-gray-700">{loan.monthlyPayment > 0 ? fmtShort(loan.monthlyPayment) : "—"}</p>
+        </div>
+        <div className="bg-gray-50 rounded-xl p-2">
+          <p className="text-xs text-gray-400">年利率</p>
+          <p className="text-sm font-bold text-gray-700">{loan.interestRate > 0 ? loan.interestRate + "%" : "—"}</p>
+        </div>
+        <div className="bg-gray-50 rounded-xl p-2">
+          <p className="text-xs text-gray-400">月利息约</p>
+          <p className="text-sm font-bold text-gray-700">{monthlyInterest > 0 ? fmtShort(monthlyInterest) : "—"}</p>
+        </div>
       </div>
       <div className="flex items-center justify-between">
         <DueBadge days={days} />
@@ -687,7 +811,15 @@ export default function App() {
   const handlePay = (debtId, amount, month) => updateDebts((p) => p.map((d) => {
     if (d.id !== debtId) return d;
     const payments = [...d.payments, { month, amount, date: new Date().toISOString() }];
-    return d.type === "loan" ? { ...d, remainingBalance: Math.max(0, d.remainingBalance - amount), payments } : { ...d, payments };
+    if (d.type === "loan") {
+      const newBalance = Math.max(0, d.remainingBalance - amount);
+      // 等额月供：每次还款自动推进1期（已还期数+1，不超过总期数）
+      const newPaidPeriods = d.loanStyle === "installment" && d.totalPeriods > 0
+        ? Math.min((d.paidPeriods || 0) + 1, d.totalPeriods)
+        : d.paidPeriods || 0;
+      return { ...d, remainingBalance: newBalance, paidPeriods: newPaidPeriods, payments };
+    }
+    return { ...d, payments };
   }));
   const handleAddInstallment = (cardId, inst) => updateDebts((p) => p.map((d) => d.id === cardId ? { ...d, installments: [...d.installments, inst] } : d));
   const handleDeleteInstallment = (cardId, instId) => updateDebts((p) => p.map((d) => d.id === cardId ? { ...d, installments: d.installments.filter((i) => i.id !== instId) } : d));

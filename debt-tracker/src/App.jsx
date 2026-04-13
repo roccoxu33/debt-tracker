@@ -118,13 +118,30 @@ function SyncBadge({ status }) {
 }
 
 function AddInstallmentModal({ cardName, onAdd, onClose }) {
-  const [form, setForm] = useState({ name: "", totalAmount: "", installmentCount: "12", feeRateMonthly: "0.6" });
+  const [form, setForm] = useState({
+    name: "", totalAmount: "", installmentCount: "12",
+    feeRateMonthly: "0.6", feeRateAnnual: "7.2",
+    paidCount: "0", rateMode: "monthly", // "monthly" | "annual"
+  });
+
+  // 利率换算：年化 / 12 = 月费率（银行分期手续费的计算方式）
+  const monthlyRate = form.rateMode === "annual"
+    ? (Number(form.feeRateAnnual) / 12)
+    : Number(form.feeRateMonthly);
+
   const preview = form.totalAmount && form.installmentCount
-    ? { principal: form.totalAmount / form.installmentCount, fee: (form.totalAmount * (form.feeRateMonthly || 0)) / 100 }
+    ? {
+        principal: Number(form.totalAmount) / Number(form.installmentCount),
+        fee: (Number(form.totalAmount) * monthlyRate) / 100,
+      }
     : null;
 
+  const totalCount = Number(form.installmentCount);
+  const paidCount = Math.min(Number(form.paidCount) || 0, totalCount - 1);
+  const remainingCount = totalCount - paidCount;
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto py-4">
       <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4">
         <h2 className="text-lg font-bold mb-1">➕ 新增分期</h2>
         <p className="text-xs text-gray-400 mb-4">{cardName}</p>
@@ -134,6 +151,7 @@ function AddInstallmentModal({ cardName, onAdd, onClose }) {
             <input className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="如：iPhone 16 Pro"
               value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
+
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="text-xs text-gray-500">分期总金额</label>
@@ -141,35 +159,95 @@ function AddInstallmentModal({ cardName, onAdd, onClose }) {
                 value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: e.target.value })} />
             </div>
             <div className="flex-1">
-              <label className="text-xs text-gray-500">分几期</label>
+              <label className="text-xs text-gray-500">总期数</label>
               <select className="w-full border rounded-lg p-2 mt-1 text-sm"
                 value={form.installmentCount} onChange={(e) => setForm({ ...form, installmentCount: e.target.value })}>
                 {[3, 6, 9, 12, 18, 24, 36].map((n) => <option key={n}>{n}</option>)}
               </select>
             </div>
           </div>
+
+          {/* 已还期数 */}
           <div>
-            <label className="text-xs text-gray-500">每月手续费率（%）</label>
-            <input type="number" step="0.01" className="w-full border rounded-lg p-2 mt-1 text-sm" placeholder="如：0.6"
-              value={form.feeRateMonthly} onChange={(e) => setForm({ ...form, feeRateMonthly: e.target.value })} />
-            <p className="text-xs text-gray-400 mt-0.5">通常 0.5%–0.75% / 月，不知道填 0</p>
+            <label className="text-xs text-gray-500">当前已还期数</label>
+            <div className="flex items-center gap-3 mt-1">
+              <input type="number" min="0" max={totalCount - 1}
+                className="w-24 border rounded-lg p-2 text-sm"
+                placeholder="0"
+                value={form.paidCount}
+                onChange={(e) => setForm({ ...form, paidCount: e.target.value })} />
+              <span className="text-xs text-gray-400">
+                → 剩余 <span className="font-semibold text-blue-600">{remainingCount}</span> 期待还
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">从第1期开始，已经还过几期了</p>
           </div>
+
+          {/* 手续费率 — 支持月费率和年化利率切换 */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-gray-500">手续费率</label>
+              <div className="flex gap-1">
+                {[["monthly","月费率"],["annual","年化利率"]].map(([k,l]) => (
+                  <button key={k}
+                    className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${form.rateMode===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-500"}`}
+                    onClick={() => setForm({ ...form, rateMode: k })}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {form.rateMode === "monthly" ? (
+              <div className="flex items-center gap-2">
+                <input type="number" step="0.01" className="flex-1 border rounded-lg p-2 text-sm" placeholder="如：0.6"
+                  value={form.feeRateMonthly}
+                  onChange={(e) => setForm({ ...form, feeRateMonthly: e.target.value, feeRateAnnual: String((Number(e.target.value) * 12).toFixed(2)) })} />
+                <span className="text-sm text-gray-400">% / 月</span>
+                {form.feeRateMonthly && <span className="text-xs text-gray-400">≈ 年化 {(Number(form.feeRateMonthly) * 12).toFixed(1)}%</span>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input type="number" step="0.1" className="flex-1 border rounded-lg p-2 text-sm" placeholder="如：7.2"
+                  value={form.feeRateAnnual}
+                  onChange={(e) => setForm({ ...form, feeRateAnnual: e.target.value, feeRateMonthly: String((Number(e.target.value) / 12).toFixed(4)) })} />
+                <span className="text-sm text-gray-400">% / 年</span>
+                {form.feeRateAnnual && <span className="text-xs text-gray-400">≈ 月 {(Number(form.feeRateAnnual) / 12).toFixed(2)}%</span>}
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-0.5">账单上显示年化利率就选「年化利率」；不知道填 0</p>
+          </div>
+
+          {/* 预览 */}
           {preview && (
             <div className="bg-blue-50 rounded-xl p-3 text-sm">
-              <p className="text-xs font-semibold text-blue-700 mb-1">预览每月还款</p>
-              <div className="flex justify-between text-gray-600"><span>本金</span><span>{fmt(preview.principal)}</span></div>
-              <div className="flex justify-between text-gray-600"><span>手续费</span><span>{fmt(preview.fee)}</span></div>
+              <p className="text-xs font-semibold text-blue-700 mb-2">预览</p>
+              <div className="flex justify-between text-gray-600"><span>每月本金</span><span>{fmt(preview.principal)}</span></div>
+              <div className="flex justify-between text-gray-600"><span>每月手续费</span><span>{monthlyRate > 0 ? fmt(preview.fee) : "—"}</span></div>
               <div className="flex justify-between font-bold text-blue-700 border-t border-blue-200 mt-1 pt-1">
                 <span>月供合计</span><span>{fmt(preview.principal + preview.fee)}</span>
+              </div>
+              <div className="flex justify-between text-gray-500 text-xs mt-1">
+                <span>还剩 {remainingCount} 期，剩余本金</span>
+                <span>{fmt(preview.principal * remainingCount)}</span>
               </div>
             </div>
           )}
         </div>
+
         <div className="flex gap-3 mt-4">
           <button className="flex-1 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
             onClick={() => {
               if (!form.name || !form.totalAmount) return alert("请填写名称和金额");
-              onAdd({ id: Date.now(), ...form, totalAmount: Number(form.totalAmount), installmentCount: Number(form.installmentCount), feeRateMonthly: Number(form.feeRateMonthly || 0), paidCount: 0, startDate: TODAY_MONTH });
+              onAdd({
+                id: Date.now(),
+                name: form.name,
+                totalAmount: Number(form.totalAmount),
+                installmentCount: totalCount,
+                paidCount,
+                feeRateMonthly: Number(monthlyRate.toFixed(4)),
+                startDate: TODAY_MONTH,
+              });
               onClose();
             }}>确认</button>
           <button className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 font-semibold" onClick={onClose}>取消</button>

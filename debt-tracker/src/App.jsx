@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { db, firebaseConfigured } from "./firebase.js";
 import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import * as XLSX from "xlsx";
 
 // ─────────────────────────────────────────────
 // UTILS
@@ -91,6 +92,147 @@ function buildProjection(debts, months = 14) {
     });
     return row;
   });
+}
+
+// ─────────────────────────────────────────────
+// EXPORT TO EXCEL
+// ─────────────────────────────────────────────
+function applyHeaderStyle(ws, headers) {
+  headers.forEach((_, ci) => {
+    const cellAddr = XLSX.utils.encode_cell({ r: 0, c: ci });
+    if (!ws[cellAddr]) return;
+    ws[cellAddr].s = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "1E40AF" } },
+      alignment: { horizontal: "center" },
+    };
+  });
+}
+
+function setColWidths(ws, widths) {
+  ws["!cols"] = widths.map(w => ({ wch: w }));
+}
+
+function exportToExcel(debts, projectionData) {
+  const wb = XLSX.utils.book_new();
+  const date = new Date().toLocaleDateString("zh-CN");
+
+  // ── Sheet 1: 总览 ──
+  const overviewRows = debts.map(d => {
+    const isCard = d.type === "credit_card";
+    const isLs = d.loanStyle === "lumpsum";
+    const cc = isCard ? computeCreditCard(d) : null;
+    const monthly = isCard ? cc.totalBill : (isLs ? 0 : (d.monthlyPayment || 0));
+    const typeLabel = isCard ? "信用卡" : (d.loanStyle === "installment" ? "分期贷款" : isLs ? "一次性到期" : "灵活还款");
+    return {
+      "名称": d.name,
+      "类型": typeLabel,
+      "剩余余额 (元)": d.remainingBalance || 0,
+      "月供 (元)": monthly,
+      "年利率 (%)": d.interestRate || 0,
+      "还款日": isLs ? d.dueDate : `每月${d.dueDay}日`,
+      "还款记录条数": (d.payments || []).length,
+    };
+  });
+  const ws1 = XLSX.utils.json_to_sheet(overviewRows);
+  applyHeaderStyle(ws1, Object.keys(overviewRows[0] || {}));
+  setColWidths(ws1, [18, 10, 16, 14, 12, 16, 12]);
+  XLSX.utils.book_append_sheet(wb, ws1, "总览");
+
+  // ── Sheet 2: 信用卡分期 ──
+  const cardRows = [];
+  debts.filter(d => d.type === "credit_card").forEach(card => {
+    card.installments.forEach(inst => {
+      const r = computeInstallment(inst);
+      cardRows.push({
+        "信用卡名称": card.name,
+        "分期项目": inst.name,
+        "分期总额 (元)": inst.totalAmount,
+        "总期数": inst.installmentCount,
+        "已还期数": inst.paidCount,
+        "剩余期数": inst.installmentCount - inst.paidCount,
+        "月手续费率 (%)": inst.feeRateMonthly,
+        "每月还款 (元)": Math.round(r.monthlyTotal),
+        "剩余金额 (元)": Math.round(r.remainingBalance),
+        "开始日期": inst.startDate || "",
+      });
+    });
+    if ((card.lastMonthSpending || 0) > 0) {
+      cardRows.push({
+        "信用卡名称": card.name,
+        "分期项目": "上月消费（非分期）",
+        "分期总额 (元)": card.lastMonthSpending,
+        "总期数": "-",
+        "已还期数": "-",
+        "剩余期数": "-",
+        "月手续费率 (%)": "-",
+        "每月还款 (元)": card.lastMonthSpending,
+        "剩余金额 (元)": card.lastMonthSpending,
+        "开始日期": "-",
+      });
+    }
+  });
+  if (cardRows.length > 0) {
+    const ws2 = XLSX.utils.json_to_sheet(cardRows);
+    applyHeaderStyle(ws2, Object.keys(cardRows[0]));
+    setColWidths(ws2, [16, 18, 14, 8, 8, 8, 14, 14, 14, 12]);
+    XLSX.utils.book_append_sheet(wb, ws2, "信用卡分期");
+  }
+
+  // ── Sheet 3: 贷款明细 ──
+  const loanRows = debts.filter(d => d.type === "loan").map(d => ({
+    "名称": d.name,
+    "贷款类型": d.loanStyle === "installment" ? "分期" : d.loanStyle === "lumpsum" ? "一次性到期" : "灵活还款",
+    "贷款总额 (元)": d.totalAmount || 0,
+    "剩余余额 (元)": d.remainingBalance || 0,
+    "总期数": d.totalPeriods || "-",
+    "已还期数": d.paidPeriods || "-",
+    "月供 (元)": d.monthlyPayment || "-",
+    "年利率 (%)": d.interestRate || 0,
+    "还款日 / 到期日": d.loanStyle === "lumpsum" ? d.dueDate : `每月${d.dueDay}日`,
+  }));
+  if (loanRows.length > 0) {
+    const ws3 = XLSX.utils.json_to_sheet(loanRows);
+    applyHeaderStyle(ws3, Object.keys(loanRows[0]));
+    setColWidths(ws3, [18, 12, 14, 14, 8, 8, 12, 12, 16]);
+    XLSX.utils.book_append_sheet(wb, ws3, "贷款明细");
+  }
+
+  // ── Sheet 4: 还款记录 ──
+  const payRows = [];
+  debts.forEach(d => {
+    (d.payments || []).forEach(p => {
+      payRows.push({
+        "账户名称": d.name,
+        "类型": d.type === "credit_card" ? "信用卡" : "贷款",
+        "还款月份": p.month,
+        "还款金额 (元)": p.amount,
+        "还款日期": p.date ? new Date(p.date).toLocaleDateString("zh-CN") : "",
+      });
+    });
+  });
+  payRows.sort((a, b) => b["还款月份"].localeCompare(a["还款月份"]));
+  if (payRows.length > 0) {
+    const ws4 = XLSX.utils.json_to_sheet(payRows);
+    applyHeaderStyle(ws4, Object.keys(payRows[0]));
+    setColWidths(ws4, [18, 8, 12, 14, 14]);
+    XLSX.utils.book_append_sheet(wb, ws4, "还款记录");
+  }
+
+  // ── Sheet 5: 月供预测 ──
+  const projRows = projectionData.map(row => {
+    const obj = { "月份": row.month };
+    let total = 0;
+    debts.forEach(d => { const v = row[`d_${d.id}`] || 0; obj[d.name] = v; total += v; });
+    obj["月供合计 (元)"] = total;
+    return obj;
+  });
+  const ws5 = XLSX.utils.json_to_sheet(projRows);
+  applyHeaderStyle(ws5, Object.keys(projRows[0] || {}));
+  setColWidths(ws5, [8, ...debts.map(() => 14), 14]);
+  XLSX.utils.book_append_sheet(wb, ws5, "月供预测");
+
+  XLSX.writeFile(wb, `负债记录_${date.replace(/\//g, "-")}.xlsx`);
 }
 
 // ─────────────────────────────────────────────
@@ -954,7 +1096,16 @@ export default function App() {
       <div className="bg-gradient-to-br from-slate-800 to-blue-700 text-white px-4 pt-8 pb-16">
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-xl font-bold">💳 负债管理工具</h1>
-          <SyncBadge status={syncStatus} />
+          <div className="flex items-center gap-2">
+            <button
+              title="导出 Excel"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white bg-opacity-15 hover:bg-opacity-25 transition text-xs font-medium"
+              onClick={() => exportToExcel(debts, projectionData)}
+            >
+              ⬇ 导出
+            </button>
+            <SyncBadge status={syncStatus} />
+          </div>
         </div>
         <p className="text-blue-200 text-xs">信用卡分期 · 贷款 · 全览</p>
         <div className="mt-4 grid grid-cols-3 gap-2">
